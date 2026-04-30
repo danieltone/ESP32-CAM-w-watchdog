@@ -264,6 +264,7 @@ When a connection is made to [http://esp32cam-rtsp](http://esp32cam-rtsp) the st
 ![Status screen](assets/index.png)
 
 The status screen shows the current device state, including watchdog recovery status, the scheduled reboot interval, and direct reboot controls.
+It also includes an embedded live MJPEG preview and a still snapshot preview directly on the page.
 
 Clicking on the ```change configuration``` button will open the configuration. It is possible that a password dialog is shown before entering.
 If this happens, for the user enter 'admin' and for the password the value that has been configured as the Access Point password.
