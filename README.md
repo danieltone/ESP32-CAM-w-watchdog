@@ -251,7 +251,8 @@ Configure at least:
 - Type of the ESP32-CAM board
 
 When finished press ```Apply``` to save the configuration. The screen will redirect to the status screen.
-Here it is possible to reboot the device so the settings take effect.
+The status screen includes a ```Reboot Now``` button, a watchdog recovery indicator, and the scheduled reboot interval.
+From there it is possible to reboot the device so the settings take effect.
 It is also possible to restart manually by pressing the reset button.
 
 ## Connecting to the configuration
@@ -262,10 +263,12 @@ When a connection is made to [http://esp32cam-rtsp](http://esp32cam-rtsp) the st
 
 ![Status screen](assets/index.png)
 
-In case changes have been made to the configuration, this is shown and the possibility to restart is given.
+The status screen shows the current device state, including watchdog recovery status, the scheduled reboot interval, and direct reboot controls.
 
 Clicking on the ```change configuration``` button will open the configuration. It is possible that a password dialog is shown before entering.
 If this happens, for the user enter 'admin' and for the password the value that has been configured as the Access Point password.
+
+After logging in, the configuration page uses the same ESP32-CAM-RTSP naming, includes a watchdog notice, and provides its own ```Reboot now``` button so the device can be restarted without returning to the status page.
 
 ## Connecting to the RTSP stream
 
@@ -392,6 +395,9 @@ esp32cam-rtsp depends on PlatformIO, Bootstrap 5 and Micro-RTSP by Kevin Hester.
   - Automatic PWDN-cycle restart (up to 3 attempts) when camera fails to initialise at boot
   - Scheduled auto-reboot every 6 hours to proactively prevent OV2640 hang conditions
   - Renamed configuration AP SSID from "Cam Config" to "ESP32-CAM-RTSP"
+  - Updated the logged-in configuration page to use ESP32-CAM-RTSP naming and include a Reboot now button
+  - Added watchdog and scheduled reboot status to the main status page
+  - Centered the live MJPEG preview in the web UI
 - August 2024
   - Added support for M5Stack M5PoECAM-W
 - January 2024
