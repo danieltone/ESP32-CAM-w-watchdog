@@ -1,6 +1,10 @@
-# ESP32CAM-RTSP
+# ESP32CAM-RTSP — Watchdog / Auto-Reboot Fork
 
 [![Platform IO CI](https://github.com/rzeldent/esp32cam-rtsp/actions/workflows/main.yml/badge.svg)](https://github.com/rzeldent/esp32cam-rtsp/actions/workflows/main.yml)
+
+> [!NOTE]
+> **This is a fork of [rzeldent/esp32cam-rtsp](https://github.com/rzeldent/esp32cam-rtsp) with added firmware-level camera watchdog / auto-reboot capabilities.**
+> See the [Watchdog / Auto-Reboot](#watchdog--auto-reboot) section below for details.
 
 Simple [RTSP](https://en.wikipedia.org/wiki/Real_Time_Streaming_Protocol), [HTTP JPEG Streamer](https://en.wikipedia.org/wiki/Motion_JPEG) and image server with configuration through the web interface.
 
@@ -8,6 +12,28 @@ Simple [RTSP](https://en.wikipedia.org/wiki/Real_Time_Streaming_Protocol), [HTTP
 > New branch available! Here [branch: develop](https://github.com/rzeldent/esp32cam-rtsp/tree/develop)
 > This branch supports all the current devices and the Seeed Studio Xiao esp32s3!
 > Please use this and let me know if this works for you!
+
+## Watchdog / Auto-Reboot
+
+ESP32-CAM modules — particularly the AI-Thinker board — occasionally lock up with a camera initialisation failure:
+
+```
+Failed to initialize the camera! Result: 261 (ESP_ERR_NOT_FOUND)
+```
+
+A plain software reset (`ESP.restart()`) does **not** fix this.  The OV2640 sensor keeps power during a soft reset and its internal I²C slave can remain in a hung state, causing the same error on every subsequent boot.  The only reliable fix in the original firmware was a physical power cycle (unplugging and replugging).
+
+### How this fork solves it
+
+This fork adds two layers of recovery, both requiring no external hardware:
+
+1. **PWDN power-down on every restart** — Before calling `ESP.restart()` (whether from the web UI button or the scheduled reboot), the firmware asserts the camera's `PWDN` pin `HIGH`.  This fully powers down the OV2640's internal circuits and clears any hung I²C state, giving the same effect as a physical power cycle.
+
+2. **Automatic recovery on camera init failure** — If the camera still fails to initialise after three attempts at boot, the firmware automatically performs the PWDN power-down sequence and restarts.  This repeats up to three times before giving up and continuing without the camera (leaving the web interface accessible for diagnostics).
+
+3. **Scheduled reboot every 6 hours** — The device performs a clean PWDN-cycle restart every 6 hours to proactively clear any accumulated hardware state before a hang can develop.  The interval is controlled by `AUTO_REBOOT_SECONDS` in `include/settings.h`.
+
+Together these changes allow cameras running 24/7 to self-recover from the hung-sensor condition without needing an external power-cycling timer or physical intervention.
 
 Flashing this software on a ESP32CAM module will make it a **RTSP streaming camera** server, a **HTTP Motion JPEG streamer** and a **HTTP image server**.
 
@@ -360,6 +386,12 @@ esp32cam-rtsp depends on PlatformIO, Bootstrap 5 and Micro-RTSP by Kevin Hester.
 
 ## Change history
 
+- April 2026 (this fork)
+  - Added firmware-level camera watchdog / PWDN power-down sequence
+  - Camera PWDN pin is asserted before every restart (web UI, auto-reboot, or init failure)
+  - Automatic PWDN-cycle restart (up to 3 attempts) when camera fails to initialise at boot
+  - Scheduled auto-reboot every 6 hours to proactively prevent OV2640 hang conditions
+  - Renamed configuration AP SSID from "Cam Config" to "ESP32-CAM-RTSP"
 - August 2024
   - Added support for M5Stack M5PoECAM-W
 - January 2024

@@ -16,6 +16,9 @@
 #include <moustache.h>
 #include <settings.h>
 
+// Milliseconds derived from AUTO_REBOOT_SECONDS defined in settings
+#define AUTO_REBOOT_MS (AUTO_REBOOT_SECONDS * 1000UL)
+
 // HTML files
 extern const char index_html_min_start[] asm("_binary_html_index_min_html_start");
 
@@ -55,11 +58,15 @@ std::unique_ptr<rtsp_server> camera_server;
 // Web server
 WebServer web_server(80);
 
-auto thingName = String(WIFI_SSID) + "-" + String(ESP.getEfuseMac(), 16);
+auto thingName = String(WIFI_SSID);
 IotWebConf iotWebConf(thingName.c_str(), &dnsServer, &web_server, WIFI_PASSWORD, CONFIG_VERSION);
 
 // Camera initialization result
 esp_err_t camera_init_result;
+
+// RTC memory persists across soft resets; tracks consecutive camera-init failures
+// so we can auto-restart with a proper PWDN power-down cycle
+RTC_DATA_ATTR static uint8_t camera_pwdn_restart_count = 0;
 
 void handle_root()
 {
@@ -226,6 +233,18 @@ void handle_stream()
 void handle_restart()
 {
 	log_v("handle_restart");
+	// Stop RTSP server cleanly before reset
+	camera_server.reset();
+	// Deinit the camera driver
+	esp_camera_deinit();
+	// Assert the camera PWDN pin HIGH so the OV2640 sensor fully powers down.
+	// This clears any hung I2C slave state that survives a plain software reset,
+	// giving the same effect as a physical power cycle without external hardware.
+#if defined(CAMERA_CONFIG_PIN_PWDN) && CAMERA_CONFIG_PIN_PWDN >= 0
+	pinMode(CAMERA_CONFIG_PIN_PWDN, OUTPUT);
+	digitalWrite(CAMERA_CONFIG_PIN_PWDN, HIGH);
+	delay(500); // wait for sensor internal circuits to fully discharge
+#endif
 	WiFi.disconnect(false, true);
 	ESP.restart();
 }
@@ -413,6 +432,7 @@ void setup()
     camera_init_result = initialize_camera();
     if (camera_init_result == ESP_OK)
     {
+      camera_pwdn_restart_count = 0; // reset failure counter on success
       update_camera_settings();
       break;
     }
@@ -420,6 +440,31 @@ void setup()
     esp_camera_deinit();
     log_e("Failed to initialize camera. Error: 0x%0x. Frame size: %s, frame rate: %d ms, jpeg quality: %d", camera_init_result, param_frame_size.value(), param_frame_duration.value(), param_jpg_quality.value());
     delay(500);
+  }
+
+  // If all init attempts failed, perform a PWDN power-cycle restart (up to 3 times).
+  // This clears any I2C/hardware state in the camera sensor that survives a plain soft reset.
+  // After 3 restart attempts with no success we give up and run without the camera so
+  // the web interface remains accessible for diagnostics.
+  if (camera_init_result != ESP_OK)
+  {
+    if (camera_pwdn_restart_count < 3)
+    {
+      camera_pwdn_restart_count++;
+      log_e("Camera init failed - triggering PWDN power-cycle restart (%d/3)", camera_pwdn_restart_count);
+#if defined(CAMERA_CONFIG_PIN_PWDN) && CAMERA_CONFIG_PIN_PWDN >= 0
+      pinMode(CAMERA_CONFIG_PIN_PWDN, OUTPUT);
+      digitalWrite(CAMERA_CONFIG_PIN_PWDN, HIGH);
+      delay(500);
+#endif
+      ESP.restart();
+    }
+    else
+    {
+      // Give up after 3 restart attempts; run without camera so web UI works
+      camera_pwdn_restart_count = 0;
+      log_e("Camera init failed after 3 PWDN-cycle restarts - continuing without camera");
+    }
   }
 
   // Set up required URL handlers on the web server
@@ -446,4 +491,11 @@ void loop()
 
   if (camera_server)
     camera_server->doLoop();
+
+  // Non-blocking hourly reboot to keep device fresh
+  static unsigned long last_reboot_check = millis();
+  if ((millis() - last_reboot_check) >= AUTO_REBOOT_MS)
+  {
+    handle_restart();
+  }
 }

@@ -3,10 +3,15 @@
 #define APP_TITLE "ESP32CAM-RTSP"
 #define APP_VERSION "1.0"
 
-#define WIFI_SSID "ESP32CAM-RTSP"
-#define WIFI_PASSWORD nullptr
-#define CONFIG_VERSION "1.6"
+// SSID and password for the ESP32's own temporary configuration Access Point.
+// This AP appears on first boot so you can connect and configure the device
+// via the web portal. Change WIFI_PASSWORD to something unique before flashing.
+#define WIFI_SSID "ESP32-CAM-RTSP"
+#define WIFI_PASSWORD "password"
+#define CONFIG_VERSION "1.7"
 
+// Password required for OTA (over-the-air) firmware updates.
+// Change this to a strong, unique value before deploying.
 #define OTA_PASSWORD "ESP32CAM-RTSP"
 
 #define RTSP_PORT 554
@@ -39,3 +44,8 @@
 #define DEFAULT_COLORBAR false
 
 #define DEFAULT_LED_INTENSITY 0
+
+// Auto reboot interval in seconds (default: 6 hours)
+#ifndef AUTO_REBOOT_SECONDS
+#define AUTO_REBOOT_SECONDS 21600
+#endif
