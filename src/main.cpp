@@ -22,6 +22,68 @@
 // HTML files
 extern const char index_html_min_start[] asm("_binary_html_index_min_html_start");
 
+constexpr char LEGACY_THING_NAME[] = "Cam Config";
+
+const char CONFIG_PORTAL_HEAD[] PROGMEM =
+    "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/><title>ESP32-CAM-RTSP Configuration</title>\n";
+const char CONFIG_PORTAL_STYLE_APPEND[] PROGMEM =
+    "body{margin:0;background:#f4f1ea;color:#1d2a33;font-family:Verdana,sans-serif;}"
+    "a{color:#0b5d7a;}"
+    ".portal-shell{max-width:760px;margin:0 auto;padding:24px 16px 32px;}"
+    ".portal-card{background:#fffdf8;border:1px solid #d8d1c3;border-radius:.6rem;padding:18px 18px 10px;box-shadow:0 10px 30px rgba(37,52,61,.08);}"
+    ".portal-note{margin:0 0 14px;background:#eef6ea;border:1px solid #bed7b5;border-radius:.5rem;padding:12px 14px;line-height:1.45;}"
+    ".portal-actions{display:grid;gap:10px;margin-top:10px;}"
+    ".portal-actions button,.portal-actions a{display:block;box-sizing:border-box;text-decoration:none;border:0;border-radius:.3rem;padding:0 14px;line-height:2.8rem;font-size:1rem;text-align:center;}"
+    ".portal-actions .secondary{background:#fff;color:#0b5d7a;border:1px solid #0b5d7a;}"
+    ".portal-actions .danger{background:#b33a3a;color:#fff;}"
+    "fieldset{margin-bottom:14px;padding:12px;border:1px solid #d8d1c3;background:#fff;}"
+    "legend{padding:0 8px;font-weight:700;color:#27404c;}";
+const char CONFIG_PORTAL_BODY[] PROGMEM =
+    "<div class='portal-shell'><div class='portal-card'><h2 style='margin-top:0;'>ESP32-CAM-RTSP Configuration</h2>"
+    "<p class='portal-note'><strong>Watchdog active.</strong> Camera init failures trigger automatic recovery, and the device performs a scheduled clean reboot every {r}.</p>"
+    "<p style='margin-top:0;'>Use this page to update the WiFi uplink, admin password, camera settings, and fallback AP details.</p>";
+const char CONFIG_PORTAL_FORM_END[] PROGMEM =
+    "<div class='portal-actions'><button type='submit'>Apply</button><button type='button' class='danger' onclick=\"if(confirm('Reboot the camera now?')) location.href='/restart'\">Reboot now</button><a class='secondary' href='/'>Back to status</a></div></form>\n";
+const char CONFIG_PORTAL_END[] PROGMEM = "</div></div></body></html>";
+
+class CustomHtmlFormatProvider : public iotwebconf::HtmlFormatProvider
+{
+public:
+  explicit CustomHtmlFormatProvider(const String &auto_reboot_interval)
+      : autoRebootInterval(auto_reboot_interval) {}
+
+  String getHead() override
+  {
+    return FPSTR(CONFIG_PORTAL_HEAD);
+  }
+
+  String getFormEnd() override
+  {
+    return FPSTR(CONFIG_PORTAL_FORM_END);
+  }
+
+  String getEnd() override
+  {
+    return FPSTR(CONFIG_PORTAL_END);
+  }
+
+protected:
+  String getStyleInner() override
+  {
+    return HtmlFormatProvider::getStyleInner() + String(FPSTR(CONFIG_PORTAL_STYLE_APPEND));
+  }
+
+  String getBodyInner() override
+  {
+    auto body = String(FPSTR(CONFIG_PORTAL_BODY));
+    body.replace("{r}", autoRebootInterval);
+    return body;
+  }
+
+private:
+  String autoRebootInterval;
+};
+
 auto param_group_camera = iotwebconf::ParameterGroup("camera", "Camera settings");
 auto param_frame_duration = iotwebconf::Builder<iotwebconf::UIntTParameter<unsigned long>>("fd").label("Frame duration (ms)").defaultValue(DEFAULT_FRAME_DURATION).min(10).build();
 auto param_frame_size = iotwebconf::Builder<iotwebconf::SelectTParameter<sizeof(frame_sizes[0])>>("fs").label("Frame size").optionValues((const char *)&frame_sizes).optionNames((const char *)&frame_sizes).optionCount(sizeof(frame_sizes) / sizeof(frame_sizes[0])).nameLength(sizeof(frame_sizes[0])).defaultValue(DEFAULT_FRAME_SIZE).build();
@@ -60,6 +122,7 @@ WebServer web_server(80);
 
 auto thingName = String(WIFI_SSID);
 IotWebConf iotWebConf(thingName.c_str(), &dnsServer, &web_server, WIFI_PASSWORD, CONFIG_VERSION);
+CustomHtmlFormatProvider customHtmlFormatProvider(String(format_duration(AUTO_REBOOT_SECONDS)));
 
 // Camera initialization result
 esp_err_t camera_init_result;
@@ -105,6 +168,8 @@ void handle_root()
       {"PsRamSize", format_memory(ESP.getPsramSize(), 0)},
       // Diagnostics
       {"Uptime", String(format_duration(millis() / 1000))},
+      {"WatchdogRecovery", "Enabled"},
+      {"AutoRebootInterval", String(format_duration(AUTO_REBOOT_SECONDS))},
       {"FreeHeap", format_memory(ESP.getFreeHeap())},
       {"MaxAllocHeap", format_memory(ESP.getMaxAllocHeap())},
       {"NumRTSPSessions", camera_server != nullptr ? String(camera_server->num_connected()) : "RTSP server disabled"},
@@ -351,6 +416,16 @@ void on_config_saved()
   update_camera_settings();
 }
 
+void migrate_legacy_configuration_naming()
+{
+  if (strcmp(iotWebConf.getThingName(), LEGACY_THING_NAME) == 0)
+  {
+    log_i("Migrating legacy configuration AP name '%s' to '%s'", LEGACY_THING_NAME, WIFI_SSID);
+    snprintf(iotWebConf.getThingName(), IOTWEBCONF_WORD_LEN, "%s", WIFI_SSID);
+    iotWebConf.saveConfig();
+  }
+}
+
 void setup()
 {
   // Disable brownout
@@ -418,6 +493,14 @@ void setup()
   param_group_camera.addItem(&param_colorbar);
   iotWebConf.addParameterGroup(&param_group_camera);
 
+  iotWebConf.setHtmlFormatProvider(&customHtmlFormatProvider);
+  iotWebConf.getSystemParameterGroup()->label = "Device and network";
+  iotWebConf.getThingNameParameter()->label = "Configuration AP name";
+  iotWebConf.getApPasswordParameter()->label = "Configuration and admin password";
+  iotWebConf.getWifiParameterGroup()->label = "WiFi uplink";
+  iotWebConf.getWifiSsidParameter()->label = "WiFi SSID";
+  iotWebConf.getWifiPasswordParameter()->label = "WiFi password";
+  iotWebConf.getApTimeoutParameter()->label = "Startup fallback delay (seconds)";
   iotWebConf.getApTimeoutParameter()->visible = true;
   iotWebConf.setConfigSavedCallback(on_config_saved);
   iotWebConf.setWifiConnectionCallback(on_connected);
@@ -425,6 +508,7 @@ void setup()
   iotWebConf.setStatusPin(USER_LED_GPIO, USER_LED_ON_LEVEL);
 #endif
   iotWebConf.init();
+  migrate_legacy_configuration_naming();
 
   // Try to initialize 3 times
   for (auto i = 0; i < 3; i++)

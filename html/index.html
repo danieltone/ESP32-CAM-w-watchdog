@@ -122,7 +122,8 @@
 
     <div class="alert alert-info">
         <h3 class="text-center">
-            Press on the button below to change the settings<br><br>
+            Press on the button below to change the settings.<br>
+            Camera watchdog recovery is enabled and the device performs a scheduled clean reboot every {{AutoRebootInterval}}.<br><br>
             <button type="button" class="btn btn-lg btn-primary" onclick="location.href='config'">Change
                 settings</button>
             &nbsp;&nbsp;
@@ -155,6 +156,10 @@
     <div class="flex-table">
         <div class="row">Uptime:</div>
         <div>{{Uptime}}</div>
+        <div class="row">Watchdog recovery:</div>
+        <div>{{WatchdogRecovery}}</div>
+        <div class="row">Scheduled reboot:</div>
+        <div>Every {{AutoRebootInterval}}</div>
         <div class="row">RTSP sessions:</div>
         <div>{{NumRTSPSessions}}</div>
         <div class="row">Free heap:</div>
