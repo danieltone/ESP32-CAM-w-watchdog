@@ -88,6 +88,30 @@
             background-color: #d9534f;
             border-color: #d43f3a;
         }
+
+        .btn-warning {
+            color: #fff;
+            background-color: #f0ad4e;
+            border-color: #eea236;
+        }
+
+        .btn-success {
+            color: #fff;
+            background-color: #5cb85c;
+            border-color: #4cae4c;
+        }
+
+        .camera-preview {
+            text-align: center;
+            margin: 16px auto;
+        }
+
+        .camera-preview img {
+            max-width: 100%;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #000;
+        }
     </style>
     <title>{{AppTitle}} v{{AppVersion}}</title>
 </head>
@@ -101,6 +125,8 @@
             Press on the button below to change the settings<br><br>
             <button type="button" class="btn btn-lg btn-primary" onclick="location.href='config'">Change
                 settings</button>
+            &nbsp;&nbsp;
+            <button type="button" class="btn btn-lg btn-danger" onclick="if(confirm('Reboot the camera now?')) location.href='restart'">&#9211; Reboot Now</button>
         </h3>
     </div>
 
@@ -234,6 +260,46 @@
             <button type="button" class="btn btn-danger" onclick="location.href='restart'">Restart</button>
         </h3>
     </div>
+    {{/CameraInitialized}}
+
+    {{#CameraInitialized}}
+    <h2 class="text-center">Camera Preview</h2>
+
+    <div class="camera-preview">
+        <p><strong>Live MJPEG Stream</strong></p>
+        <div>
+            <img id="stream-img" src="" alt="" style="display:none;min-width:320px;min-height:240px;"><br>
+        </div>
+        <br>
+        <button id="stream-start-btn" class="btn btn-success" onclick="startStream()">&#9654; Start Live Stream</button>
+        <button id="stream-stop-btn" class="btn btn-warning" style="display:none" onclick="stopStream()">&#9632; Stop Stream</button>
+    </div>
+
+    <div class="camera-preview">
+        <p><strong>Still Snapshot</strong></p>
+        <img id="snap-img" src="/snapshot" alt="Snapshot"><br><br>
+        <button class="btn btn-primary" onclick="refreshSnap()">&#8635; Refresh Snapshot</button>
+    </div>
+
+    <script>
+        function startStream() {
+            var img = document.getElementById('stream-img');
+            img.src = '/stream';
+            img.style.display = 'block';
+            document.getElementById('stream-start-btn').style.display = 'none';
+            document.getElementById('stream-stop-btn').style.display = 'inline-block';
+        }
+        function stopStream() {
+            var img = document.getElementById('stream-img');
+            img.src = '';
+            img.style.display = 'none';
+            document.getElementById('stream-start-btn').style.display = 'inline-block';
+            document.getElementById('stream-stop-btn').style.display = 'none';
+        }
+        function refreshSnap() {
+            document.getElementById('snap-img').src = '/snapshot?t=' + Date.now();
+        }
+    </script>
     {{/CameraInitialized}}
 
 
