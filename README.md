@@ -81,6 +81,7 @@ The software provides a **configuration web server**, that can be used to:
 - Set the WiFi parameters,
 - Set the timeout for connecting to the access point,
 - Set an access password,
+- **Set the HTTP server port** (default: 80 — change to any port you wish, e.g. 8080),
 - Select the image size,
 - Select the frame rate,
 - Select the JPEG quality
@@ -111,7 +112,7 @@ The software provides a **configuration web server**, that can be used to:
   - Color bar
 
 The software provides contains also a mDNS server to be easily discoverable on the local network.
-It advertises HTTP (port 80) and RTSP (port 554)
+It advertises HTTP (configurable, default port 80) and RTSP (port 554)
 
 ## Required
 
@@ -249,6 +250,7 @@ Configure at least:
 - The access point to connect to. No dropdown is present to show available networks!
 - A password for accessing the Access point (AP) when starting. (required)
 - Type of the ESP32-CAM board
+- **HTTP server port** (optional — defaults to 80; change this if you want the web interface on a different port, e.g. 8080). The new port takes effect after the next reboot.
 
 When finished press ```Apply``` to save the configuration. The screen will redirect to the status screen.
 The status screen includes a ```Reboot Now``` button, a watchdog recovery indicator, and the scheduled reboot interval.

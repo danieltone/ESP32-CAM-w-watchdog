@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_wifi.h>
 #include <soc/rtc_cntl_reg.h>
 #include <driver/i2c.h>
@@ -84,6 +85,9 @@ private:
   String autoRebootInterval;
 };
 
+auto param_group_server = iotwebconf::ParameterGroup("server", "Server settings");
+auto param_http_port = iotwebconf::Builder<iotwebconf::UIntTParameter<uint16_t>>("hp").label("HTTP server port").defaultValue(DEFAULT_HTTP_PORT).min(1).max(65535).build();
+
 auto param_group_camera = iotwebconf::ParameterGroup("camera", "Camera settings");
 auto param_frame_duration = iotwebconf::Builder<iotwebconf::UIntTParameter<unsigned long>>("fd").label("Frame duration (ms)").defaultValue(DEFAULT_FRAME_DURATION).min(10).build();
 auto param_frame_size = iotwebconf::Builder<iotwebconf::SelectTParameter<sizeof(frame_sizes[0])>>("fs").label("Frame size").optionValues((const char *)&frame_sizes).optionNames((const char *)&frame_sizes).optionCount(sizeof(frame_sizes) / sizeof(frame_sizes[0])).nameLength(sizeof(frame_sizes[0])).defaultValue(DEFAULT_FRAME_SIZE).build();
@@ -117,11 +121,11 @@ OV2640 cam;
 DNSServer dnsServer;
 // RTSP Server
 std::unique_ptr<rtsp_server> camera_server;
-// Web server
-WebServer web_server(80);
+// Web server (created dynamically in setup() with the configured port)
+WebServer *web_server = nullptr;
 
 auto thingName = String(WIFI_SSID);
-IotWebConf iotWebConf(thingName.c_str(), &dnsServer, &web_server, WIFI_PASSWORD, CONFIG_VERSION);
+IotWebConf *iotWebConf = nullptr;
 CustomHtmlFormatProvider customHtmlFormatProvider(String(format_duration(AUTO_REBOOT_SECONDS)));
 
 // Camera initialization result
@@ -135,7 +139,7 @@ void handle_root()
 {
   log_v("Handle root");
   // Let IotWebConf test and handle captive portal requests.
-  if (iotWebConf.handleCaptivePortal())
+  if (iotWebConf->handleCaptivePortal())
     return;
 
   // Format hostname
@@ -157,7 +161,7 @@ void handle_root()
       {"AppTitle", APP_TITLE},
       {"AppVersion", APP_VERSION},
       {"BoardType", BOARD_NAME},
-      {"ThingName", iotWebConf.getThingName()},
+      {"ThingName", iotWebConf->getThingName()},
       {"SDKVersion", ESP.getSdkVersion()},
       {"ChipModel", ESP.getChipModel()},
       {"ChipRevision", String(ESP.getChipRevision())},
@@ -181,8 +185,8 @@ void handle_root()
       {"WifiMode", wifi_modes[WiFi.getMode()]},
       {"IPv4", ipv4.toString()},
       {"IPv6", ipv6.toString()},
-      {"NetworkState.ApMode", String(iotWebConf.getState() == iotwebconf::NetworkState::ApMode)},
-      {"NetworkState.OnLine", String(iotWebConf.getState() == iotwebconf::NetworkState::OnLine)},
+      {"NetworkState.ApMode", String(iotWebConf->getState() == iotwebconf::NetworkState::ApMode)},
+      {"NetworkState.OnLine", String(iotWebConf->getState() == iotwebconf::NetworkState::OnLine)},
       // Camera
       {"FrameSize", String(param_frame_size.value())},
       {"FrameDuration", String(param_frame_duration.value())},
@@ -217,9 +221,9 @@ void handle_root()
       // RTSP
       {"RtspPort", String(RTSP_PORT)}};
 
-  web_server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  web_server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   auto html = moustache_render(index_html_min_start, substitutions);
-  web_server.send(200, "text/html", html);
+  web_server->send(200, "text/html", html);
 }
 
 #ifdef FLASH_LED_GPIO
@@ -227,12 +231,12 @@ void handle_flash()
 {
   log_v("handle_flash");
   // If no value present, use off, otherwise convert v to integer. Depends on analog resolution for max value
-  auto v = web_server.hasArg("v") ? web_server.arg("v").toInt() : 0;
+  auto v = web_server->hasArg("v") ? web_server->arg("v").toInt() : 0;
   // If conversion fails, v = 0
   analogWrite(FLASH_LED_GPIO, v);
 
-  web_server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  web_server.send(200);
+  web_server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  web_server->send(200);
 }
 #endif
 
@@ -241,7 +245,7 @@ void handle_snapshot()
   log_v("handle_snapshot");
   if (camera_init_result != ESP_OK)
   {
-    web_server.send(404, "text/plain", "Camera is not initialized");
+    web_server->send(404, "text/plain", "Camera is not initialized");
     return;
   }
 
@@ -254,14 +258,14 @@ void handle_snapshot()
   auto fb = (const char *)cam.getfb();
   if (fb == nullptr)
   {
-    web_server.send(404, "text/plain", "Unable to obtain frame buffer from the camera");
+    web_server->send(404, "text/plain", "Unable to obtain frame buffer from the camera");
     return;
   }
 
-  web_server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  web_server.setContentLength(fb_len);
-  web_server.send(200, "image/jpeg", "");
-  web_server.sendContent(fb, fb_len);
+  web_server->sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  web_server->setContentLength(fb_len);
+  web_server->send(200, "image/jpeg", "");
+  web_server->sendContent(fb, fb_len);
 }
 
 #define STREAM_CONTENT_BOUNDARY "123456789000000000000987654321"
@@ -271,14 +275,14 @@ void handle_stream()
   log_v("handle_stream");
   if (camera_init_result != ESP_OK)
   {
-    web_server.send(404, "text/plain", "Camera is not initialized");
+    web_server->send(404, "text/plain", "Camera is not initialized");
     return;
   }
 
   log_v("starting streaming");
   // Blocks further handling of HTTP server until stopped
   char size_buf[12];
-  auto client = web_server.client();
+  auto client = web_server->client();
   client.write("HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: multipart/x-mixed-replace; boundary=" STREAM_CONTENT_BOUNDARY "\r\n");
   while (client.connected())
   {
@@ -414,15 +418,20 @@ void on_config_saved()
 {
   log_v("on_config_saved");
   update_camera_settings();
+  // Persist the chosen HTTP port so it is used on the next boot
+  Preferences prefs;
+  prefs.begin("httpsrv", false);
+  prefs.putUInt("port", (uint32_t)param_http_port.value());
+  prefs.end();
 }
 
 void migrate_legacy_configuration_naming()
 {
-  if (strcmp(iotWebConf.getThingName(), LEGACY_THING_NAME) == 0)
+  if (strcmp(iotWebConf->getThingName(), LEGACY_THING_NAME) == 0)
   {
     log_i("Migrating legacy configuration AP name '%s' to '%s'", LEGACY_THING_NAME, WIFI_SSID);
-    snprintf(iotWebConf.getThingName(), IOTWEBCONF_WORD_LEN, "%s", WIFI_SSID);
-    iotWebConf.saveConfig();
+    snprintf(iotWebConf->getThingName(), IOTWEBCONF_WORD_LEN, "%s", WIFI_SSID);
+    iotWebConf->saveConfig();
   }
 }
 
@@ -466,6 +475,16 @@ void setup()
   if (CAMERA_CONFIG_FB_LOCATION == CAMERA_FB_IN_PSRAM && !psramInit())
     log_e("Failed to initialize PSRAM");
 
+  // Read the saved HTTP port from NVS (written by on_config_saved); defaults to 80 on first boot
+  {
+    Preferences prefs;
+    prefs.begin("httpsrv", true);
+    uint16_t httpPort = (uint16_t)prefs.getUInt("port", DEFAULT_HTTP_PORT);
+    prefs.end();
+    web_server = new WebServer(httpPort);
+  }
+  iotWebConf = new IotWebConf(thingName.c_str(), &dnsServer, web_server, WIFI_PASSWORD, CONFIG_VERSION);
+
   param_group_camera.addItem(&param_frame_duration);
   param_group_camera.addItem(&param_frame_size);
   param_group_camera.addItem(&param_jpg_quality);
@@ -491,23 +510,25 @@ void setup()
   param_group_camera.addItem(&param_vflip);
   param_group_camera.addItem(&param_dcw);
   param_group_camera.addItem(&param_colorbar);
-  iotWebConf.addParameterGroup(&param_group_camera);
+  param_group_server.addItem(&param_http_port);
+  iotWebConf->addParameterGroup(&param_group_server);
+  iotWebConf->addParameterGroup(&param_group_camera);
 
-  iotWebConf.setHtmlFormatProvider(&customHtmlFormatProvider);
-  iotWebConf.getSystemParameterGroup()->label = "Device and network";
-  iotWebConf.getThingNameParameter()->label = "Configuration AP name";
-  iotWebConf.getApPasswordParameter()->label = "Configuration and admin password";
-  iotWebConf.getWifiParameterGroup()->label = "WiFi uplink";
-  iotWebConf.getWifiSsidParameter()->label = "WiFi SSID";
-  iotWebConf.getWifiPasswordParameter()->label = "WiFi password";
-  iotWebConf.getApTimeoutParameter()->label = "Startup fallback delay (seconds)";
-  iotWebConf.getApTimeoutParameter()->visible = true;
-  iotWebConf.setConfigSavedCallback(on_config_saved);
-  iotWebConf.setWifiConnectionCallback(on_connected);
+  iotWebConf->setHtmlFormatProvider(&customHtmlFormatProvider);
+  iotWebConf->getSystemParameterGroup()->label = "Device and network";
+  iotWebConf->getThingNameParameter()->label = "Configuration AP name";
+  iotWebConf->getApPasswordParameter()->label = "Configuration and admin password";
+  iotWebConf->getWifiParameterGroup()->label = "WiFi uplink";
+  iotWebConf->getWifiSsidParameter()->label = "WiFi SSID";
+  iotWebConf->getWifiPasswordParameter()->label = "WiFi password";
+  iotWebConf->getApTimeoutParameter()->label = "Startup fallback delay (seconds)";
+  iotWebConf->getApTimeoutParameter()->visible = true;
+  iotWebConf->setConfigSavedCallback(on_config_saved);
+  iotWebConf->setWifiConnectionCallback(on_connected);
 #ifdef USER_LED_GPIO
-  iotWebConf.setStatusPin(USER_LED_GPIO, USER_LED_ON_LEVEL);
+  iotWebConf->setStatusPin(USER_LED_GPIO, USER_LED_ON_LEVEL);
 #endif
-  iotWebConf.init();
+  iotWebConf->init();
   migrate_legacy_configuration_naming();
 
   // Try to initialize 3 times
@@ -552,26 +573,26 @@ void setup()
   }
 
   // Set up required URL handlers on the web server
-  web_server.on("/", HTTP_GET, handle_root);
-  web_server.on("/config", []
-                { iotWebConf.handleConfig(); });
+  web_server->on("/", HTTP_GET, handle_root);
+  web_server->on("/config", []
+                { iotWebConf->handleConfig(); });
   // Camera snapshot
-  web_server.on("/snapshot", HTTP_GET, handle_snapshot);
+  web_server->on("/snapshot", HTTP_GET, handle_snapshot);
   // Camera stream
-  web_server.on("/stream", HTTP_GET, handle_stream);
+  web_server->on("/stream", HTTP_GET, handle_stream);
 #ifdef FLASH_LED_GPIO
   // Flash led
-  web_server.on("/flash", HTTP_GET, handle_flash);
+  web_server->on("/flash", HTTP_GET, handle_flash);
 #endif
   // ESP restart
-  web_server.on("/restart", HTTP_GET, handle_restart);
-  web_server.onNotFound([]()
-                        { iotWebConf.handleNotFound(); });
+  web_server->on("/restart", HTTP_GET, handle_restart);
+  web_server->onNotFound([]()
+                        { iotWebConf->handleNotFound(); });
 }
 
 void loop()
 {
-  iotWebConf.doLoop();
+  iotWebConf->doLoop();
 
   if (camera_server)
     camera_server->doLoop();
